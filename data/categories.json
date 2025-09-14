@@ -1,0 +1,41 @@
+{
+    "Countries and Capitals": {
+        "fallback_items": [
+            {"answer": "France", "clue": "Home of the Eiffel Tower"},
+            {"answer": "Japan", "clue": "Land of the Rising Sun"},
+            {"answer": "Brazil", "clue": "Largest country in South America"},
+            {"answer": "Australia", "clue": "Island continent"},
+            {"answer": "Egypt", "clue": "Home of the pyramids"},
+            {"answer": "Canada", "clue": "Second largest country by area"},
+            {"answer": "India", "clue": "Most populous democracy"},
+            {"answer": "Russia", "clue": "Largest country by area"},
+            {"answer": "Germany", "clue": "European economic powerhouse"}
+        ]
+    },
+    "Famous People": {
+        "fallback_items": [
+            {"answer": "Einstein", "clue": "Theory of relativity physicist"},
+            {"answer": "Shakespeare", "clue": "English playwright and poet"},
+            {"answer": "Leonardo da Vinci", "clue": "Renaissance artist and inventor"},
+            {"answer": "Mozart", "clue": "Classical music composer"},
+            {"answer": "Gandhi", "clue": "Indian independence leader"},
+            {"answer": "Cleopatra", "clue": "Last pharaoh of Egypt"},
+            {"answer": "Napoleon", "clue": "French military emperor"},
+            {"answer": "Picasso", "clue": "Cubist painter"},
+            {"answer": "Marie Curie", "clue": "Nobel Prize-winning scientist"}
+        ]
+    },
+    "Animals and Habitats": {
+        "fallback_items": [
+            {"answer": "Penguin", "clue": "Flightless Antarctic bird"},
+            {"answer": "Lion", "clue": "King of the jungle"},
+            {"answer": "Elephant", "clue": "Largest land mammal"},
+            {"answer": "Dolphin", "clue": "Intelligent marine mammal"},
+            {"answer": "Eagle", "clue": "Majestic bird of prey"},
+            {"answer": "Kangaroo", "clue": "Hopping Australian marsupial"},
+            {"answer": "Panda", "clue": "Black and white bamboo eater"},
+            {"answer": "Tiger", "clue": "Striped big cat"},
+            {"answer": "Whale", "clue": "Largest animal on Earth"}
+        ]
+    }
+}
