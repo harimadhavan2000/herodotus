@@ -104,6 +104,10 @@ class GameState:
                 "new_clues_revealed": self._get_newly_revealed_count()
             }
             
+            # After solving, check if we're stuck and need emergency revelation
+            if not self.board.is_complete():
+                self._check_and_handle_stuck_state()
+            
             # Check if game is complete
             if self.board.is_complete():
                 self.game_active = False
@@ -230,3 +234,46 @@ class GameState:
     def quit_game(self):
         """End the current game"""
         self.game_active = False
+    
+    def _check_and_handle_stuck_state(self):
+        """Check if the game is stuck and handle with emergency revelation"""
+        if not self.board:
+            return
+        
+        # Check if we're stuck (no available clues but game not complete)
+        if self.board.is_stuck():
+            print("🚨 Detected stuck state - no available clues!")
+            
+            # Try emergency revelation
+            revealed = self.board.emergency_reveal_clue()
+            
+            if revealed:
+                print("✅ Emergency clue revealed to continue progress")
+            else:
+                print("⚠️  No more clues available - this shouldn't happen!")
+    
+    def check_game_completability(self) -> Dict[str, any]:
+        """Check if the current game state is completable"""
+        if not self.board:
+            return {"completable": False, "reason": "No board"}
+        
+        if self.board.is_complete():
+            return {"completable": True, "reason": "Already complete"}
+        
+        # Check if we're currently stuck
+        if self.board.is_stuck():
+            return {
+                "completable": False, 
+                "reason": "Currently stuck - no available clues",
+                "can_emergency_reveal": len(self.board.get_unrevealed_cells()) > 0
+            }
+        
+        # Check overall reachability
+        reachability = self.board.check_reachability()
+        
+        return {
+            "completable": reachability.get("all_reachable", True),
+            "reachable_percentage": reachability.get("reachability_percentage", 100.0),
+            "unreachable_count": len(reachability.get("unreachable_positions", [])),
+            "available_clues": len(self.board.get_current_clues())
+        }

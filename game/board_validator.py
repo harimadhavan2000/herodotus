@@ -47,7 +47,7 @@ class BoardQualityValidator:
     
     def validate_board_quality(self, board_data: Dict, enable_llm_validation: bool = True) -> Tuple[bool, List[str]]:
         """
-        Validate board quality focusing on meaningful, solvable clues
+        Validate board quality focusing on meaningful, solvable clues and completability
         
         Returns:
             Tuple[bool, List[str]]: (is_valid, list_of_issues)
@@ -66,6 +66,10 @@ class BoardQualityValidator:
         # Check starter clues specifically
         starter_issues = self._validate_starter_clues(board_data)
         issues.extend(starter_issues)
+        
+        # Check completability (can all cells be reached?)
+        completability_issues = self._validate_completability(board_data)
+        issues.extend(completability_issues)
         
         # Use LLM validation if available and enabled
         if enable_llm_validation and self.llm_available and not issues:
@@ -167,7 +171,7 @@ CLUES TO CHECK:
 CRITICAL ISSUES TO FLAG:
 ❌ Placeholder clues like "This is item 1 in the [category] category"
 ❌ Clues that give no actual information about the answer
-❌ Generic descriptions with no specific details
+❌ Generic descriptions with no specific details. However; for higher difficulty levels; niche knowldge requirement is fine only.
 ❌ Clues that require seeing the grid structure
 ❌ Starter clues that can't be solved independently
 
@@ -244,6 +248,86 @@ A clue MUST contain actual information that helps solve the answer!"""
         suggestions.append("Make starter clues independently solvable without other answers")
         
         return " | ".join(suggestions)
+    
+    def _validate_completability(self, board_data: Dict) -> List[str]:
+        """Validate that the board can be completed (all cells reachable)"""
+        issues = []
+        
+        try:
+            # Create a mock board to test reachability
+            from .board import GameBoard
+            
+            # Create relationship manager if relationships exist
+            relationship_manager = None
+            if 'relationships' in board_data and board_data['relationships']:
+                relationship_manager = self._create_mock_relationship_manager(board_data['relationships'])
+            
+            # Create temporary board
+            temp_board = GameBoard(board_data, relationship_manager)
+            
+            # Check reachability
+            reachability = temp_board.check_reachability()
+            
+            if not reachability["all_reachable"]:
+                reachability_pct = reachability["reachability_percentage"]
+                unreachable_count = len(reachability["unreachable_positions"])
+                
+                if reachability_pct < 80:  # Less than 80% reachable is a problem
+                    issues.append(f"Only {reachability_pct:.1f}% of cells are reachable - {unreachable_count} unreachable cells")
+                
+        except Exception as e:
+            # Don't fail validation due to reachability check errors
+            print(f"Warning: Completability check failed: {e}")
+        
+        return issues
+    
+    def _create_mock_relationship_manager(self, relationships_data: List[Dict]):
+        """Create a mock relationship manager for testing"""
+        try:
+            from .relationships import RelationshipManager, ClueRelationship, RelationType
+            
+            manager = RelationshipManager("testing")
+            
+            for rel_data in relationships_data:
+                try:
+                    # Parse relationship type
+                    rel_type_str = rel_data.get('type', 'enables').lower()
+                    rel_type = RelationType.ENABLES  # Default
+                    
+                    for rt in RelationType:
+                        if rt.value == rel_type_str:
+                            rel_type = rt
+                            break
+                    
+                    # Parse positions
+                    source_positions = []
+                    for pos_data in rel_data.get('source_positions', []):
+                        if 'row' in pos_data and 'col' in pos_data:
+                            source_positions.append((pos_data['row'], pos_data['col']))
+                    
+                    target_positions = []
+                    for pos_data in rel_data.get('target_positions', []):
+                        if 'row' in pos_data and 'col' in pos_data:
+                            target_positions.append((pos_data['row'], pos_data['col']))
+                    
+                    # Create relationship
+                    if source_positions and target_positions:
+                        relationship = ClueRelationship(
+                            relation_type=rel_type,
+                            source_positions=source_positions,
+                            target_positions=target_positions,
+                            strength=float(rel_data.get('strength', 0.5)),
+                            description=rel_data.get('description', "Test relationship")
+                        )
+                        manager.add_relationship(relationship)
+                        
+                except Exception:
+                    continue
+                    
+            return manager
+            
+        except Exception:
+            return None
     
     def is_custom_category_likely(self, category: str) -> bool:
         """Check if this is likely a custom category that might need special handling"""

@@ -103,27 +103,50 @@ class RelationshipManager:
     
     def get_newly_revealed_positions(self, just_solved_pos: Tuple[int, int], 
                                    all_solved_positions: Set[Tuple[int, int]]) -> List[Tuple[int, int]]:
-        """Get positions that should be newly revealed after solving a position"""
+        """Get positions that should be newly revealed after solving a position - conservative approach"""
         newly_revealed = []
+        max_reveals_per_solve = 2  # Conservative limit
         
         # Check all relationships involving the just-solved position
         related_relationships = self.get_relationships_for_position(just_solved_pos)
         
-        # Collect all positions that might be affected
-        potentially_affected = set()
+        # Collect positions with priority based on relationship type and strength
+        candidates = []
         for rel in related_relationships:
-            potentially_affected.update(rel.source_positions)
-            potentially_affected.update(rel.target_positions)
+            if rel.is_source(just_solved_pos):
+                # This position was a source, so check targets
+                for target_pos in rel.target_positions:
+                    if target_pos not in all_solved_positions:
+                        priority = self._get_revelation_priority(rel)
+                        candidates.append((priority, target_pos, rel))
         
-        # Remove already solved positions
-        potentially_affected -= all_solved_positions
+        # Sort by priority (higher priority first) and limit reveals
+        candidates.sort(key=lambda x: x[0], reverse=True)
         
-        # Check each potentially affected position
-        for pos in potentially_affected:
+        # Check each candidate position (up to limit)
+        for priority, pos, rel in candidates[:max_reveals_per_solve * 2]:  # Check double the limit
+            if len(newly_revealed) >= max_reveals_per_solve:
+                break
+                
             if self.can_reveal_position(pos, all_solved_positions):
                 newly_revealed.append(pos)
         
         return newly_revealed
+    
+    def _get_revelation_priority(self, relationship: ClueRelationship) -> float:
+        """Get priority for revealing positions based on relationship type"""
+        priority_map = {
+            RelationType.ENABLES: 1.0,      # Direct enabling - high priority
+            RelationType.HINTS_AT: 0.8,     # Hints - medium priority  
+            RelationType.COMPLEMENTS: 0.6,  # Complements - lower priority
+            RelationType.REQUIRES: 0.4,     # Requirements - lowest for targets
+            RelationType.CONTRASTS: 0.5,    # Contrasts - medium-low
+            RelationType.CHAINS_TO: 0.9     # Chains - high priority
+        }
+        
+        base_priority = priority_map.get(relationship.relation_type, 0.5)
+        # Factor in relationship strength
+        return base_priority * relationship.strength
     
     def get_complexity_level(self) -> Dict[str, int]:
         """Get complexity metrics for the current relationship set"""
