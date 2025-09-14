@@ -19,12 +19,18 @@ class LLMService:
     
     def generate_game_board(self, category: str, grid_size: int, difficulty_level: str = "challenging", enable_validation: bool = True) -> Dict:
         """Generate a complete game board with sophisticated interconnected clues"""
-        max_attempts = 3
+        # More attempts for harder difficulties to avoid fallback
+        max_attempts = {
+            "casual": 3,
+            "challenging": 4,
+            "expert": 5,
+            "mastermind": 5
+        }.get(difficulty_level, 4)
         
         for attempt in range(max_attempts):
             try:
                 print(f"🤖 Generating board (attempt {attempt + 1}/{max_attempts})...")
-                board_data = self._generate_single_board(category, grid_size, difficulty_level, attempt)
+                board_data = self._generate_single_board(category, grid_size, difficulty_level, attempt, max_attempts)
                 
                 if not enable_validation:
                     return board_data
@@ -53,7 +59,7 @@ class LLMService:
         # All attempts failed, use enhanced fallback
         return self._enhanced_fallback_board(category, grid_size, difficulty_level)
     
-    def _generate_single_board(self, category: str, grid_size: int, difficulty_level: str, attempt: int = 0) -> Dict:
+    def _generate_single_board(self, category: str, grid_size: int, difficulty_level: str, attempt: int = 0, max_attempts: int = 4) -> Dict:
         """Generate a single board attempt"""
         num_items = grid_size * grid_size
         
@@ -87,9 +93,21 @@ class LLMService:
         
         settings = complexity_settings.get(difficulty_level, complexity_settings["challenging"])
         
+        # Increase complexity on later attempts to avoid fallback
+        if attempt >= 2:  # From 3rd attempt onwards, make it more aggressive
+            settings = dict(settings)  # Copy to avoid modifying original
+            if difficulty_level in ["expert", "mastermind"]:
+                settings["max_references_per_clue"] = min(settings["max_references_per_clue"] + 1, 5)
+                settings["relationship_types"].extend(["chains_to", "contrasts"])
+                settings["relationship_types"] = list(set(settings["relationship_types"]))  # Remove duplicates
+        
         # Add quality improvement feedback based on attempt
         quality_reminder = ""
         if attempt > 0:
+            final_attempt_warning = ""
+            if attempt >= max_attempts - 2:
+                final_attempt_warning = "🚨 FINAL ATTEMPT - Generate high-quality clues to avoid simple fallback!"
+            
             quality_reminder = f"""
 
 ⚠️  CRITICAL QUALITY IMPROVEMENT (Attempt {attempt + 1}):
@@ -98,9 +116,19 @@ The previous generation had quality issues. This time:
 ❌ NEVER use "Item 1", "Item 2", "Entry number X", etc.
 ✅ EVERY clue must contain REAL, SPECIFIC information about the answer
 ✅ Starter clues must be solvable with general knowledge
-✅ Use actual facts, descriptions, characteristics, or relationships"""
+✅ Use actual facts, descriptions, characteristics, or relationships
 
-        prompt = f"""Generate a {grid_size}x{grid_size} puzzle grid for the category "{category}" with {difficulty_level} difficulty.
+{final_attempt_warning}"""
+
+        # Add attempt-specific guidance
+        attempt_guidance = ""
+        if attempt >= 1:
+            attempt_guidance = f"""
+🔥 HIGH PRIORITY - Attempt {attempt + 1}/{max_attempts}:
+This is a retry after quality issues. Focus on {difficulty_level.upper()} difficulty with sophisticated clues!
+"""
+
+        prompt = f"""Generate a {grid_size}x{grid_size} puzzle grid for the category "{category}" with {difficulty_level} difficulty.{attempt_guidance}
 
 🚫 ABSOLUTE QUALITY RULES - NEVER VIOLATE:
 ❌ NO placeholder clues: "This is item X", "Item number Y", "The Xth item"
