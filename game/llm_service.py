@@ -10,11 +10,18 @@ load_dotenv()
 
 class LLMService:
     def __init__(self):
-        api_key = os.getenv('PORTKEY_API_KEY')
-        if not api_key:
-            raise ValueError("PORTKEY_API_KEY not found in environment variables")
+        try:
+            api_key = os.getenv('PORTKEY_API_KEY')
+            if not api_key:
+                self.llm_available = False
+                raise ValueError("PORTKEY_API_KEY not found in environment variables")
+            
+            self.portkey = Portkey(api_key=api_key)
+            self.llm_available = True
+        except Exception:
+            self.llm_available = False
+            raise
         
-        self.portkey = Portkey(api_key=api_key)
         self.validator = BoardQualityValidator()
     
     def generate_game_board(self, category: str, grid_size: int, difficulty_level: str = "challenging", enable_validation: bool = True) -> Dict:
@@ -52,11 +59,16 @@ class LLMService:
                         print("⚠️  Max attempts reached, using enhanced fallback...")
                         
             except Exception as e:
-                print(f"❌ Generation attempt {attempt + 1} failed: {e}")
+                print(f"❌ Generation attempt {attempt + 1} failed with error:")
+                print(f"   Error type: {type(e).__name__}")
+                print(f"   Error message: {str(e)}")
                 if attempt == max_attempts - 1:
-                    print("🔄 Using fallback generation...")
+                    print("🔄 Final attempt failed, will use manual input fallback...")
         
-        # All attempts failed, use enhanced fallback
+        # All attempts failed, show summary and wait for user input
+        print("🚨 All generation attempts exhausted.")
+        print("📋 Please review the error details above.")
+        input("Press Enter to continue with enhanced fallback board generation...")
         return self._enhanced_fallback_board(category, grid_size, difficulty_level)
     
     def _generate_single_board(self, category: str, grid_size: int, difficulty_level: str, attempt: int = 0, max_attempts: int = 4) -> Dict:
@@ -193,14 +205,24 @@ Make the puzzle appropriately complex for {difficulty_level} difficulty with ric
             response = self.portkey.chat.completions.create(
                 model="@openai-1/gpt-4o",
                 messages=[
-                    {"role": "system", "content": "You are a puzzle game designer. Return only valid JSON without any additional text or formatting."},
+                    {"role": "system", "content": "You are a puzzle game designer. CRITICAL: Return ONLY valid JSON. No markdown, no explanations, no extra text. All strings must be properly quoted and escaped. Ensure JSON is complete and valid."},
                     {"role": "user", "content": prompt}
                 ],
                 temperature=0.7,
                 max_tokens=2000
             )
             
-            content = response.choices[0].message.content.strip()
+            if not response.choices or len(response.choices) == 0:
+                raise ValueError("LLM returned no choices")
+            
+            message = response.choices[0].message
+            if not message or not hasattr(message, 'content'):
+                raise ValueError("LLM response has no message content")
+                
+            content = message.content
+            if not content:
+                raise ValueError("LLM returned empty response")
+            content = content.strip()
             
             # Clean up any markdown formatting
             if content.startswith('```json'):
@@ -208,7 +230,64 @@ Make the puzzle appropriately complex for {difficulty_level} difficulty with ric
             if content.endswith('```'):
                 content = content[:-3]
             
-            board_data = json.loads(content)
+            # Additional cleanup for malformed JSON
+            content = content.strip()
+            
+            # Try to fix common JSON issues
+            content = self._fix_json_issues(content)
+            
+            # Debug: Save the content that's causing issues
+            if attempt > 0:  # On retry attempts, show the JSON for debugging
+                print(f"🔍 DEBUG: Attempting to parse JSON content (length: {len(content)}):")
+                print(f"First 200 chars: {content[:200]}...")
+                print(f"Last 200 chars: ...{content[-200:]}")
+            
+            try:
+                board_data = json.loads(content)
+            except json.JSONDecodeError as json_error:
+                print(f"⚠️  JSON parsing failed: {json_error}")
+                print(f"🔧 Attempting JSON repair...")
+                
+                # Try more aggressive JSON fixing
+                repaired_content = self._repair_json_aggressively(content, str(json_error))
+                
+                try:
+                    board_data = json.loads(repaired_content)
+                    print(f"✅ JSON repair successful!")
+                except json.JSONDecodeError as repair_error:
+                    print(f"❌ Local JSON repair failed: {repair_error}")
+                    print(f"🤖 Attempting LLM-based JSON repair...")
+                    
+                    # Try using LLM to fix the JSON
+                    if self.llm_available:
+                        llm_repaired = self._llm_fix_json(content, str(json_error))
+                        
+                        if llm_repaired:
+                            try:
+                                board_data = json.loads(llm_repaired)
+                                print(f"✅ LLM JSON repair successful!")
+                            except json.JSONDecodeError:
+                                print(f"❌ LLM JSON repair also failed, will retry generation...")
+                                raise json_error  # Re-raise original error
+                        else:
+                            print(f"❌ LLM JSON repair returned no result, will retry generation...")
+                            raise json_error  # Re-raise original error
+                    else:
+                        print(f"⚠️  LLM not available for JSON repair, will retry generation...")
+                        # Show some debug info to help understand the issue
+                        print(f"🔍 Problematic JSON around error location:")
+                        lines = content.split('\n')
+                        if 'line' in str(repair_error):
+                            import re
+                            line_match = re.search(r'line (\d+)', str(repair_error))
+                            if line_match:
+                                error_line_num = int(line_match.group(1)) - 1
+                                start_line = max(0, error_line_num - 2)
+                                end_line = min(len(lines), error_line_num + 3)
+                                for i in range(start_line, end_line):
+                                    marker = " >>> " if i == error_line_num else "     "
+                                    print(f"{marker}Line {i+1}: {lines[i]}")
+                        raise json_error  # Re-raise original error
             
             # Assign positions if not provided
             self._assign_positions(board_data, grid_size)
@@ -223,7 +302,17 @@ Make the puzzle appropriately complex for {difficulty_level} difficulty with ric
             return board_data
             
         except Exception as e:
-            print(f"Error generating board: {e}")
+            print(f"❌ LLM board generation failed with detailed error:")
+            print(f"   Error type: {type(e).__name__}")
+            print(f"   Error message: {str(e)}")
+            import traceback
+            print(f"   Full traceback:")
+            traceback.print_exc()
+            
+            print(f"\n⚠️  All LLM generation attempts failed.")
+            print(f"📋 Please review the error details above.")
+            input("Press Enter to continue with fallback board generation...")
+            
             return self._enhanced_fallback_board(category, grid_size, difficulty_level)
     
     def _assign_positions(self, board_data: Dict, grid_size: int):
@@ -457,3 +546,201 @@ Make the puzzle appropriately complex for {difficulty_level} difficulty with ric
             
         except Exception as e:
             return f"Hint unavailable (Error: {str(e)})"
+    
+    def _fix_json_issues(self, content: str) -> str:
+        """Fix common JSON formatting issues from LLM responses"""
+        import re
+        
+        # Remove any trailing commas before closing brackets/braces
+        content = re.sub(r',(\s*[}\]])', r'\1', content)
+        
+        # Fix unescaped quotes in strings (basic attempt)
+        # This is tricky because we need to distinguish between JSON structure quotes and content quotes
+        
+        # Try to find and fix unterminated strings by ensuring they're properly closed
+        lines = content.split('\n')
+        fixed_lines = []
+        
+        for i, line in enumerate(lines):
+            # Check for unterminated strings (odd number of quotes on a line)
+            quote_count = line.count('"')
+            
+            # Skip lines that are likely part of JSON structure (keys, arrays, etc.)
+            if ':' not in line and '[' not in line and '{' not in line:
+                continue
+                
+            # If we have an odd number of quotes and this looks like a value line
+            if quote_count % 2 == 1 and ':' in line:
+                # Try to find where the unterminated string might be
+                if line.strip().endswith(',') or i == len(lines) - 1:
+                    # This line should end properly, try to add missing quote
+                    if line.count('"') % 2 == 1:
+                        # Find the last quote and see if we need to close the string
+                        last_quote_pos = line.rfind('"')
+                        if last_quote_pos > 0:
+                            # Check if this is a value (not a key)
+                            before_last_quote = line[:last_quote_pos]
+                            if ':' in before_last_quote:
+                                # This appears to be an unterminated value string
+                                if line.strip().endswith(','):
+                                    line = line.rstrip(',').rstrip() + '\",'
+                                else:
+                                    line = line.rstrip() + '\"'
+            
+            fixed_lines.append(line)
+        
+        return '\n'.join(fixed_lines)
+    
+    def _repair_json_aggressively(self, content: str, error_msg: str) -> str:
+        """More aggressive JSON repair based on specific error"""
+        import re
+        
+        # If the error mentions a specific line/column, try to fix that area
+        if "line" in error_msg and "column" in error_msg:
+            # Extract line and column numbers
+            line_match = re.search(r'line (\d+)', error_msg)
+            col_match = re.search(r'column (\d+)', error_msg)
+            
+            if line_match and col_match:
+                error_line = int(line_match.group(1)) - 1  # 0-indexed
+                error_col = int(col_match.group(1)) - 1
+                
+                lines = content.split('\n')
+                if 0 <= error_line < len(lines):
+                    problem_line = lines[error_line]
+                    
+                    # Common fixes for different JSON errors
+                    if "Unterminated string" in error_msg:
+                        # Try to add a closing quote at the error position or end of line
+                        if error_col < len(problem_line):
+                            # Add quote at error position
+                            fixed_line = problem_line[:error_col] + '"' + problem_line[error_col:]
+                        else:
+                            # Add quote at end of line
+                            fixed_line = problem_line.rstrip() + '"'
+                        
+                        # If line doesn't end with comma and it's not the last item, add comma
+                        if not fixed_line.strip().endswith(',') and error_line < len(lines) - 2:
+                            fixed_line = fixed_line.rstrip() + ','
+                        
+                        lines[error_line] = fixed_line
+                    
+                    elif "Expecting ',' delimiter" in error_msg:
+                        # Handle missing comma errors
+                        # Usually this means the previous line is missing a comma
+                        if error_line > 0:
+                            prev_line = lines[error_line - 1].rstrip()
+                            # Add comma to previous line if it doesn't already have one
+                            if not prev_line.endswith(',') and not prev_line.endswith('{') and not prev_line.endswith('['):
+                                lines[error_line - 1] = prev_line + ','
+                        else:
+                            # If error is on current line, try to fix it
+                            if not problem_line.rstrip().endswith(','):
+                                lines[error_line] = problem_line.rstrip() + ','
+                    
+                    elif "Expecting property name enclosed in double quotes" in error_msg:
+                        # Handle unquoted property names
+                        # Look for unquoted keys and quote them
+                        import re
+                        # Pattern to find unquoted property names (word followed by colon)
+                        pattern = r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*:'
+                        def quote_match(match):
+                            return f'"{match.group(1)}":'
+                        
+                        fixed_line = re.sub(pattern, quote_match, problem_line)
+                        lines[error_line] = fixed_line
+                    
+                    elif "Expecting" in error_msg and ":" in error_msg:
+                        # Handle missing colon errors
+                        if ':' not in problem_line and '"' in problem_line:
+                            # Try to add colon after the first quoted string (likely a key)
+                            quote_pos = problem_line.find('"', problem_line.find('"') + 1)
+                            if quote_pos != -1 and quote_pos + 1 < len(problem_line):
+                                fixed_line = problem_line[:quote_pos + 1] + ': ' + problem_line[quote_pos + 1:].lstrip()
+                                lines[error_line] = fixed_line
+        
+        # Additional common fixes
+        repaired = '\n'.join(lines)
+        
+        # Apply global fixes that might not have been caught by line-specific fixes
+        import re
+        
+        # Fix any remaining unquoted property names globally
+        repaired = re.sub(r'\b([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'"\1":', repaired)
+        
+        # Remove any invalid escape sequences
+        repaired = re.sub(r'\\[^"\\\/bfnrt]', '', repaired)
+        
+        # Fix multiple consecutive commas
+        repaired = re.sub(r',\s*,', ',', repaired)
+        
+        # Fix duplicate quotes around already quoted properties
+        repaired = re.sub(r'""([^"]+)"":', r'"\1":', repaired)
+        
+        # Ensure proper closing of JSON
+        if not repaired.strip().endswith('}'):
+            repaired = repaired.rstrip() + '\n}'
+        
+        return repaired
+    
+    def _llm_fix_json(self, malformed_json: str, error_msg: str) -> str:
+        """Use LLM to fix malformed JSON"""
+        try:
+            if not self.llm_available:
+                return None
+                
+            # Truncate very long JSON to avoid token limits
+            if len(malformed_json) > 3000:
+                malformed_json = malformed_json[:3000] + "... [truncated]"
+            
+            prompt = f"""Fix this malformed JSON. The error is: {error_msg}
+
+MALFORMED JSON:
+{malformed_json}
+
+Requirements:
+- Return ONLY the fixed JSON
+- No explanations or markdown formatting
+- Ensure all strings are properly quoted
+- Ensure all commas and colons are correctly placed
+- Ensure the JSON is complete and valid
+
+FIXED JSON:"""
+
+            response = self.portkey.chat.completions.create(
+                model="@openai-1/gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are a JSON repair specialist. Return only valid, fixed JSON with no additional text."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,  # Low temperature for precision
+                max_tokens=2500
+            )
+            
+            if not response.choices or len(response.choices) == 0:
+                return None
+                
+            message = response.choices[0].message
+            if not message or not hasattr(message, 'content'):
+                return None
+                
+            fixed_content = message.content
+            if not fixed_content:
+                return None
+                
+            # Clean up the response
+            fixed_content = fixed_content.strip()
+            
+            # Remove any markdown formatting
+            if fixed_content.startswith('```json'):
+                fixed_content = fixed_content[7:]
+            if fixed_content.startswith('```'):
+                fixed_content = fixed_content[3:]
+            if fixed_content.endswith('```'):
+                fixed_content = fixed_content[:-3]
+                
+            return fixed_content.strip()
+            
+        except Exception as e:
+            print(f"⚠️  LLM JSON repair failed: {e}")
+            return None
