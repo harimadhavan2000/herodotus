@@ -1,47 +1,75 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Set
 from dataclasses import dataclass
 from fuzzywuzzy import fuzz
+from .relationships import RelationshipManager, ClueRelationship
 
 @dataclass
 class Cell:
     answer: str
     clue: str
-    references: List[str]
+    references: List[str]  # Keep for backward compatibility
     difficulty: int
     position: Dict[str, int]
     solved: bool = False
     revealed: bool = False
+    relationship_description: str = ""  # Description of this cell's relationships
 
 class GameBoard:
-    def __init__(self, board_data: Dict):
+    def __init__(self, board_data: Dict, relationship_manager: Optional[RelationshipManager] = None):
         self.category = board_data['category']
         self.grid_size = board_data['grid_size']
         self.cells: Dict[Tuple[int, int], Cell] = {}
         self.solved_count = 0
         self.total_cells = self.grid_size * self.grid_size
         self.starter_revealed = False
+        self.relationship_manager = relationship_manager
         
         # Initialize cells from board data
         for item in board_data['items']:
             pos = (item['position']['row'], item['position']['col'])
-            self.cells[pos] = Cell(
+            cell = Cell(
                 answer=item['answer'],
                 clue=item['clue'],
                 references=item.get('references', []),
                 difficulty=item.get('difficulty', 1),
                 position=item['position']
             )
+            
+            # Add relationship description if relationship manager exists
+            if self.relationship_manager:
+                cell.relationship_description = self.relationship_manager.generate_relationship_description(pos)
+            
+            self.cells[pos] = cell
         
         # Reveal the first starter clue (lowest difficulty)
-        self._reveal_starter_clue()
+        self._reveal_starter_clues()
     
-    def _reveal_starter_clue(self):
-        """Reveal the easiest clue to start the game"""
+    def _reveal_starter_clues(self):
+        """Reveal the initial clues to start the game"""
+        if self.relationship_manager:
+            # Use relationship manager to determine starter clues
+            solved_positions: Set[Tuple[int, int]] = set()
+            
+            # Find clues that can be revealed without any dependencies
+            for pos, cell in self.cells.items():
+                if self.relationship_manager.can_reveal_position(pos, solved_positions):
+                    cell.revealed = True
+            
+            # If no clues were revealed, fallback to simple difficulty-based selection
+            if not any(cell.revealed for cell in self.cells.values()):
+                self._simple_starter_reveal()
+        else:
+            # Fallback to simple method
+            self._simple_starter_reveal()
+        
+        self.starter_revealed = True
+    
+    def _simple_starter_reveal(self):
+        """Simple fallback method to reveal starter clues"""
         starter_cells = [cell for cell in self.cells.values() if cell.difficulty == 1]
         if starter_cells:
             starter_cell = min(starter_cells, key=lambda c: len(c.references))
             starter_cell.revealed = True
-            self.starter_revealed = True
     
     def get_cell(self, row: int, col: int) -> Optional[Cell]:
         """Get cell at specific position"""
@@ -74,7 +102,28 @@ class GameBoard:
         cell.solved = True
         self.solved_count += 1
         
-        # Find and reveal cells that reference this solved answer
+        # Get position of solved cell
+        solved_pos = (cell.position['row'], cell.position['col'])
+        
+        if self.relationship_manager:
+            # Use relationship manager to determine newly revealed positions
+            all_solved_positions = {(c.position['row'], c.position['col']) 
+                                  for c in self.cells.values() if c.solved}
+            
+            newly_revealed_positions = self.relationship_manager.get_newly_revealed_positions(
+                solved_pos, all_solved_positions
+            )
+            
+            # Reveal the newly available positions
+            for pos in newly_revealed_positions:
+                if pos in self.cells:
+                    self.cells[pos].revealed = True
+        else:
+            # Fallback to simple reference-based revelation
+            self._simple_mark_solved(cell)
+    
+    def _simple_mark_solved(self, cell: Cell):
+        """Simple fallback method for revealing connected clues"""
         solved_answer = cell.answer.lower()
         for other_cell in self.cells.values():
             if not other_cell.revealed and not other_cell.solved:
@@ -136,15 +185,17 @@ class GameBoard:
         return grid
     
     def get_current_clues(self) -> List[Dict]:
-        """Get all currently available clues"""
+        """Get all currently available clues with relationship information"""
         clues = []
         for pos, cell in self.cells.items():
             if cell.revealed and not cell.solved:
-                clues.append({
+                clue_data = {
                     'position': f"({pos[0]+1},{pos[1]+1})",
                     'clue': cell.clue,
                     'difficulty': cell.difficulty,
                     'row': pos[0],
-                    'col': pos[1]
-                })
+                    'col': pos[1],
+                    'relationship_description': cell.relationship_description
+                }
+                clues.append(clue_data)
         return sorted(clues, key=lambda x: x['difficulty'])

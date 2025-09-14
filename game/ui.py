@@ -111,13 +111,76 @@ class GameUI:
                     self.console.print("[red]Invalid choice. Please select 1, 2, or 3.[/red]")
             except Exception:
                 self.console.print("[red]Invalid input. Please enter a number.[/red]")
+
+    def select_clue_difficulty(self) -> str:
+        """Let user select clue difficulty level"""
+        self.console.print("\n🧠 [bold]Choose Clue Difficulty[/bold]")
+        
+        difficulties = {
+            1: {
+                "level": "casual", 
+                "name": "Casual", 
+                "desc": "Straightforward clues, minimal interconnections",
+                "color": "green",
+                "details": "• Direct, obvious clues\n• Simple 1-to-1 references\n• Easy to guess answers"
+            },
+            2: {
+                "level": "challenging", 
+                "name": "Challenging", 
+                "desc": "Moderate complexity with some interdependencies",
+                "color": "yellow", 
+                "details": "• Mix of direct and indirect clues\n• Some multi-step reasoning\n• Moderate interconnections"
+            },
+            3: {
+                "level": "expert", 
+                "name": "Expert", 
+                "desc": "Complex webs of interconnected clues",
+                "color": "red",
+                "details": "• Highly indirect clues\n• Many-to-many relationships\n• Requires deep reasoning"
+            },
+            4: {
+                "level": "mastermind", 
+                "name": "Mastermind", 
+                "desc": "Ultimate challenge with maximum interconnectivity",
+                "color": "magenta",
+                "details": "• Cryptic, multilayered clues\n• Complex dependency chains\n• Mental gymnastics required"
+            }
+        }
+        
+        for num, info in difficulties.items():
+            self.console.print(f"\n{num}. [bold {info['color']}]{info['name']}[/bold {info['color']}] - {info['desc']}")
+            self.console.print(f"   {info['details']}", style="dim")
+        
+        while True:
+            try:
+                choice = IntPrompt.ask(f"\nSelect clue difficulty (1-4)", default=2)
+                if choice in difficulties:
+                    selected = difficulties[choice]
+                    self.console.print(f"\n✨ Selected: [{selected['color']}]{selected['name']}[/{selected['color']}] difficulty")
+                    return selected["level"]
+                else:
+                    self.console.print("[red]Invalid choice. Please select 1, 2, 3, or 4.[/red]")
+            except Exception:
+                self.console.print("[red]Invalid input. Please enter a number.[/red]")
     
     def display_game_board(self, game_status: Dict):
         """Display the current game board and status"""
         self.clear_screen()
         
-        # Game header
-        self.console.print(f"🧩 [bold]{game_status['category']}[/bold] - {game_status['grid_size']}x{game_status['grid_size']} Grid\n")
+        # Game header with difficulty info
+        difficulty_level = game_status.get('clue_difficulty_level', 'challenging')
+        difficulty_colors = {
+            "casual": "green",
+            "challenging": "yellow", 
+            "expert": "red",
+            "mastermind": "magenta"
+        }
+        difficulty_color = difficulty_colors.get(difficulty_level, "white")
+        
+        header = f"🧩 [bold]{game_status['category']}[/bold] - {game_status['grid_size']}x{game_status['grid_size']} Grid"
+        header += f" | [{difficulty_color}]{difficulty_level.title()} Difficulty[/{difficulty_color}]"
+        
+        self.console.print(header + "\n")
         
         # Create board display
         board_display = game_status.get('board_display', [])
@@ -161,23 +224,47 @@ class GameUI:
         return display
     
     def display_current_clues(self, clues: List[Dict]):
-        """Display available clues"""
+        """Display available clues with relationship information"""
         if not clues:
             self.console.print("\n[yellow]No clues available yet![/yellow]")
             return
         
         self.console.print("\n🔍 [bold]Available Clues:[/bold]")
         
-        for clue in clues:
-            difficulty_colors = {1: "green", 2: "yellow", 3: "red"}
+        for i, clue in enumerate(clues):
+            difficulty_colors = {1: "green", 2: "yellow", 3: "red", 4: "magenta"}
             difficulty_color = difficulty_colors.get(clue['difficulty'], "white")
             
+            # Build clue content with relationship info
+            clue_content = f"[{difficulty_color}]{clue['clue']}[/{difficulty_color}]"
+            
+            # Add relationship description if available
+            relationship_desc = clue.get('relationship_description', '')
+            if relationship_desc and relationship_desc != "Independent clue":
+                clue_content += f"\n\n[dim]🔗 Relationships: {relationship_desc}[/dim]"
+            
+            # Add complexity indicator
+            complexity_indicators = {
+                1: "⭐",
+                2: "⭐⭐", 
+                3: "⭐⭐⭐",
+                4: "⭐⭐⭐⭐"
+            }
+            complexity = complexity_indicators.get(clue['difficulty'], "⭐")
+            
+            title_text = f"{complexity} Position {clue['position']} (Level {clue['difficulty']})"
+            
             clue_panel = Panel(
-                f"[{difficulty_color}]{clue['clue']}[/{difficulty_color}]",
-                title=f"Position {clue['position']} (Difficulty: {clue['difficulty']})",
-                border_style=difficulty_color
+                clue_content,
+                title=title_text,
+                border_style=difficulty_color,
+                expand=False
             )
             self.console.print(clue_panel)
+            
+            # Add spacing between clues for readability
+            if i < len(clues) - 1:
+                self.console.print()
     
     def get_user_guess(self) -> Dict[str, any]:
         """Get user's guess input"""
@@ -234,7 +321,8 @@ class GameUI:
                 title="💡 Hint",
                 border_style="yellow"
             )
-            self.console.print(f"\n{hint_panel}")
+            self.console.print()  # Add blank line
+            self.console.print(hint_panel)  # Print panel directly, not in f-string
             self.console.print(f"Hints used: {hint_result['hints_used']}")
         else:
             self.console.print(f"\n❌ [red]{hint_result['message']}[/red]")

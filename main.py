@@ -58,11 +58,14 @@ class GridPuzzleGame:
             # Grid size selection
             grid_size = self.ui.select_grid_size()
             
+            # Clue difficulty selection
+            clue_difficulty = self.ui.select_clue_difficulty()
+            
             # Show loading screen while generating board
-            self.ui.console.print(f"\n🤖 Generating puzzle for '{selected_category}'...")
+            self.ui.console.print(f"\n🤖 Generating puzzle for '{selected_category}' at {clue_difficulty} difficulty...")
             
             # Start the game
-            success = self.game_state.start_new_game(selected_category, grid_size)
+            success = self.game_state.start_new_game(selected_category, grid_size, clue_difficulty)
             
             if not success:
                 self.ui.display_error("Failed to generate game board. Please try again.")

@@ -3,6 +3,7 @@ import json
 from typing import Dict, List, Optional
 from portkey_ai import Portkey
 from dotenv import load_dotenv
+from .relationships import RelationshipManager, ClueRelationship, RelationType
 
 load_dotenv()
 
@@ -14,38 +15,93 @@ class LLMService:
         
         self.portkey = Portkey(api_key=api_key)
     
-    def generate_game_board(self, category: str, grid_size: int) -> Dict:
-        """Generate a complete game board with interconnected clues"""
+    def generate_game_board(self, category: str, grid_size: int, difficulty_level: str = "challenging") -> Dict:
+        """Generate a complete game board with sophisticated interconnected clues"""
         num_items = grid_size * grid_size
         
-        prompt = f"""Generate a {grid_size}x{grid_size} puzzle grid for the category "{category}".
+        # Define complexity based on difficulty level
+        complexity_settings = {
+            "casual": {
+                "max_references_per_clue": 1,
+                "multi_step_reasoning": False,
+                "indirect_clues": False,
+                "relationship_types": ["enables", "hints_at"]
+            },
+            "challenging": {
+                "max_references_per_clue": 2,
+                "multi_step_reasoning": True,
+                "indirect_clues": True,
+                "relationship_types": ["enables", "hints_at", "requires", "complements"]
+            },
+            "expert": {
+                "max_references_per_clue": 3,
+                "multi_step_reasoning": True,
+                "indirect_clues": True,
+                "relationship_types": ["enables", "hints_at", "requires", "complements", "contrasts"]
+            },
+            "mastermind": {
+                "max_references_per_clue": 4,
+                "multi_step_reasoning": True,
+                "indirect_clues": True,
+                "relationship_types": ["enables", "hints_at", "requires", "complements", "contrasts", "chains_to"]
+            }
+        }
         
-Requirements:
+        settings = complexity_settings.get(difficulty_level, complexity_settings["challenging"])
+        
+        prompt = f"""Generate a {grid_size}x{grid_size} puzzle grid for the category "{category}" with {difficulty_level} difficulty.
+
+COMPLEXITY REQUIREMENTS FOR {difficulty_level.upper()}:
+- Maximum references per clue: {settings["max_references_per_clue"]}
+- Multi-step reasoning required: {settings["multi_step_reasoning"]}
+- Use indirect/cryptic clues: {settings["indirect_clues"]}
+- Relationship types to use: {', '.join(settings["relationship_types"])}
+
+CORE REQUIREMENTS:
 1. Create exactly {num_items} items related to "{category}"
-2. Each item needs a clue that references at least one other item in the grid
-3. Ensure at least one clue can be solved without knowing other answers (starter clue)
-4. Make clues progressively reveal information about other items
-5. Vary difficulty levels (1=easy, 2=medium, 3=hard)
+2. Generate sophisticated interconnected clues with complex relationships
+3. Include multiple relationship types (one-to-many, many-to-one, many-to-many)
+4. Ensure at least 2-3 starter clues that can be solved independently
+5. Create difficulty progression (1=easy starter, 2=medium, 3=hard, 4=expert)
+6. Make solving one clue reveal multiple new clues through different relationship types
 
 Return ONLY a valid JSON object with this exact structure:
 {{
     "category": "{category}",
     "grid_size": {grid_size},
+    "difficulty_level": "{difficulty_level}",
     "items": [
         {{
             "answer": "item_name",
-            "clue": "descriptive clue that may reference other items",
+            "clue": "sophisticated clue with complex references",
             "references": ["other_item_names"],
             "difficulty": 1,
             "position": {{"row": 0, "col": 0}}
         }}
+    ],
+    "relationships": [
+        {{
+            "type": "enables",
+            "source_positions": [{{row: 0, col: 0}}],
+            "target_positions": [{{row: 0, col: 1}}, {{row: 1, col: 0}}],
+            "strength": 0.8,
+            "description": "Solving this reveals two connected clues"
+        }}
     ]
 }}
 
-Make sure clues are interconnected and solvable. Example references:
-- "Capital of the country that borders [other answer]"
-- "Same continent as [other answer]"
-- "Director of the movie starring [other answer]"
+RELATIONSHIP TYPES TO GENERATE:
+- "enables": Solving source reveals targets
+- "requires": Target needs sources solved first  
+- "hints_at": Source provides hints about targets
+- "complements": Sources work together to solve target
+- "contrasts": Sources provide contrasting information
+- "chains_to": Sequential solving chain
+
+EXAMPLE COMPLEXITY FOR {difficulty_level.upper()}:
+{self._get_difficulty_examples(difficulty_level)}
+
+Make the puzzle appropriately complex for {difficulty_level} difficulty with rich interconnections.
 """
 
         try:
@@ -71,6 +127,13 @@ Make sure clues are interconnected and solvable. Example references:
             
             # Assign positions if not provided
             self._assign_positions(board_data, grid_size)
+            
+            # Parse and validate relationships
+            if 'relationships' in board_data:
+                board_data['relationship_manager'] = self._create_relationship_manager(
+                    board_data.get('relationships', []), 
+                    difficulty_level
+                )
             
             return board_data
             
@@ -107,6 +170,62 @@ Make sure clues are interconnected and solvable. Example references:
             "grid_size": grid_size,
             "items": items
         }
+    
+    def _create_relationship_manager(self, relationships_data: List[Dict], difficulty_level: str) -> RelationshipManager:
+        """Create a RelationshipManager from LLM-generated relationship data"""
+        manager = RelationshipManager(difficulty_level)
+        
+        for rel_data in relationships_data:
+            try:
+                # Parse relationship type
+                rel_type_str = rel_data.get('type', 'enables').lower()
+                rel_type = None
+                
+                for rt in RelationType:
+                    if rt.value == rel_type_str:
+                        rel_type = rt
+                        break
+                
+                if rel_type is None:
+                    rel_type = RelationType.ENABLES  # Default fallback
+                
+                # Parse positions
+                source_positions = []
+                for pos_data in rel_data.get('source_positions', []):
+                    if 'row' in pos_data and 'col' in pos_data:
+                        source_positions.append((pos_data['row'], pos_data['col']))
+                
+                target_positions = []
+                for pos_data in rel_data.get('target_positions', []):
+                    if 'row' in pos_data and 'col' in pos_data:
+                        target_positions.append((pos_data['row'], pos_data['col']))
+                
+                # Create and add relationship
+                if source_positions and target_positions:
+                    relationship = ClueRelationship(
+                        relation_type=rel_type,
+                        source_positions=source_positions,
+                        target_positions=target_positions,
+                        strength=float(rel_data.get('strength', 0.5)),
+                        description=rel_data.get('description', f"{rel_type.value} relationship")
+                    )
+                    manager.add_relationship(relationship)
+                    
+            except Exception as e:
+                print(f"Warning: Failed to parse relationship {rel_data}: {e}")
+                continue
+        
+        return manager
+    
+    def _get_difficulty_examples(self, difficulty_level: str) -> str:
+        """Get difficulty-specific examples for prompts"""
+        examples = {
+            "casual": "Direct clues with simple 1-to-1 references",
+            "challenging": "Mix of direct and indirect clues with some multi-step reasoning",
+            "expert": "Highly interconnected clues requiring deep logical reasoning", 
+            "mastermind": "Cryptic, multilayered clues with maximum interconnectivity and mental gymnastics"
+        }
+        return examples.get(difficulty_level, examples["challenging"])
     
     def get_hint(self, item_name: str, context: str) -> str:
         """Generate a hint for a specific item"""

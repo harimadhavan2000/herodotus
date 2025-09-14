@@ -19,12 +19,12 @@ class ClueGenerator:
         except Exception:
             return {}
     
-    def generate_board(self, category: str, grid_size: int = 3) -> Dict:
-        """Generate a complete game board with interconnected clues"""
+    def generate_board(self, category: str, grid_size: int = 3, difficulty_level: str = "challenging") -> Dict:
+        """Generate a complete game board with sophisticated interconnected clues"""
         try:
             # Try LLM generation first
-            print(f"🤖 Generating {grid_size}x{grid_size} board for '{category}'...")
-            board_data = self.llm_service.generate_game_board(category, grid_size)
+            print(f"🤖 Generating {grid_size}x{grid_size} board for '{category}' at {difficulty_level} difficulty...")
+            board_data = self.llm_service.generate_game_board(category, grid_size, difficulty_level)
             
             # Validate the generated board
             if self._validate_board(board_data, grid_size):

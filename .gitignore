@@ -44,3 +44,4 @@ game_saves/
 .pytest_cache/
 .coverage
 htmlcov/
+sample*

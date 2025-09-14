@@ -16,18 +16,25 @@ class GameState:
         self.game_active = False
         self.current_category = ""
         self.grid_size = 3
+        self.clue_difficulty_level = "challenging"
         self.difficulty_multiplier = 1.0
     
-    def start_new_game(self, category: str, grid_size: int = 3) -> bool:
-        """Initialize a new game with given category and grid size"""
+    def start_new_game(self, category: str, grid_size: int = 3, clue_difficulty_level: str = "challenging") -> bool:
+        """Initialize a new game with given category, grid size, and clue difficulty"""
         try:
             self.current_category = category
             self.grid_size = grid_size
-            self.difficulty_multiplier = self._calculate_difficulty_multiplier(grid_size)
+            self.clue_difficulty_level = clue_difficulty_level
+            self.difficulty_multiplier = self._calculate_difficulty_multiplier(grid_size, clue_difficulty_level)
             
-            # Generate board using LLM
-            board_data = self.clue_generator.generate_board(category, grid_size)
-            self.board = GameBoard(board_data)
+            # Generate board using LLM with difficulty level
+            board_data = self.clue_generator.generate_board(category, grid_size, clue_difficulty_level)
+            
+            # Extract relationship manager if present
+            relationship_manager = board_data.get('relationship_manager')
+            
+            # Create board with relationship manager
+            self.board = GameBoard(board_data, relationship_manager)
             
             # Reset game state
             self.start_time = time.time()
@@ -42,10 +49,22 @@ class GameState:
             print(f"Error starting game: {e}")
             return False
     
-    def _calculate_difficulty_multiplier(self, grid_size: int) -> float:
-        """Calculate difficulty multiplier based on grid size"""
-        multipliers = {3: 1.0, 4: 1.5, 5: 2.0}
-        return multipliers.get(grid_size, 1.0)
+    def _calculate_difficulty_multiplier(self, grid_size: int, clue_difficulty_level: str = "challenging") -> float:
+        """Calculate difficulty multiplier based on grid size and clue difficulty"""
+        # Base multiplier for grid size
+        grid_multipliers = {3: 1.0, 4: 1.5, 5: 2.0}
+        grid_mult = grid_multipliers.get(grid_size, 1.0)
+        
+        # Additional multiplier for clue difficulty
+        clue_multipliers = {
+            "casual": 0.8,
+            "challenging": 1.0, 
+            "expert": 1.3,
+            "mastermind": 1.6
+        }
+        clue_mult = clue_multipliers.get(clue_difficulty_level, 1.0)
+        
+        return grid_mult * clue_mult
     
     def make_guess(self, guess: str, row: int, col: int) -> Dict[str, any]:
         """Process a player's guess"""
@@ -175,6 +194,7 @@ class GameState:
             "game_active": self.game_active,
             "category": self.current_category,
             "grid_size": self.grid_size,
+            "clue_difficulty_level": self.clue_difficulty_level,
             "progress": self.board.get_progress(),
             "solved_count": self.board.solved_count,
             "total_cells": self.board.total_cells,
@@ -204,8 +224,8 @@ class GameState:
         }
     
     def restart_game(self) -> bool:
-        """Restart the current game with same category and grid size"""
-        return self.start_new_game(self.current_category, self.grid_size)
+        """Restart the current game with same category, grid size, and difficulty"""
+        return self.start_new_game(self.current_category, self.grid_size, self.clue_difficulty_level)
     
     def quit_game(self):
         """End the current game"""
